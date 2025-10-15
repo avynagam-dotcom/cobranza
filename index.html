@@ -39,13 +39,11 @@
     .kpi.green { background: #f0fdf4; border-left-color: #22c55e; }
     .kpi.orange { background: #fffbeb; border-left-color: #f97316; }
     .kpi.red { background: #fef2f2; border-left-color: #ef4444; }
-    .kpi.blue { background: #eff6ff; border-left-color: #3b82f6; }
     .kpi-label { font-size: 11px; color: #666; margin-bottom: 4px; }
     .kpi-value { font-size: 20px; font-weight: bold; }
     .kpi.green .kpi-value { color: #22c55e; }
     .kpi.orange .kpi-value { color: #f97316; }
     .kpi.red .kpi-value { color: #ef4444; }
-    .kpi.blue .kpi-value { color: #3b82f6; }
     .dias-nav {
       display: flex;
       gap: 8px;
@@ -205,12 +203,9 @@
       font-weight: bold;
     }
     .badge.red { background: #fee2e2; color: #991b1b; }
-    .badge.green { background: #dcfce7; color: #166534; }
     @media (max-width: 640px) {
       .stats-grid { grid-template-columns: repeat(2, 1fr); }
       .kpis { grid-template-columns: 1fr; }
-      .dias-nav { gap: 6px; }
-      .dia-btn { padding: 8px 10px; font-size: 12px; }
     }
   </style>
 </head>
@@ -277,7 +272,7 @@
       </div>
 
       <div id="tabPendientes" class="tab-content" style="display:none;">
-        <div id="pendientesContent"></div>
+        <div id="pendientesContent">Cargando clientes...</div>
       </div>
     </div>
   </div>
@@ -306,15 +301,20 @@
         const btn = document.createElement('button');
         btn.className = `dia-btn ${dia === diaActual ? 'active' : ''}`;
         btn.textContent = dia;
-        btn.onclick = () => cambiarDia(dia);
+        btn.onclick = (e) => cambiarDia(dia, e);
         nav.appendChild(btn);
       });
+      cambiarDia(diaActual, null);
     }
 
-    function cambiarDia(dia) {
+    function cambiarDia(dia, e) {
       diaActual = dia;
-      document.querySelectorAll('.dia-btn').forEach(btn => btn.classList.remove('active'));
-      event.target.classList.add('active');
+      if (e) {
+        document.querySelectorAll('.dia-btn').forEach(btn => btn.classList.remove('active'));
+        e.target.classList.add('active');
+      }
+      document.getElementById('tabNuevo').style.display = 'none';
+      document.getElementById('tabPendientes').style.display = 'block';
       renderizarClientes();
       actualizarKPIs();
     }
@@ -348,26 +348,36 @@
         return;
       }
 
-      await db.collection('clientes').add({
-        dia,
-        nombre,
-        diaEntrega,
-        totalNota,
-        pagos: [],
-        fechaCreacion: new Date()
-      });
+      try {
+        await db.collection('clientes').add({
+          dia,
+          nombre,
+          diaEntrega,
+          totalNota,
+          pagos: [],
+          fechaCreacion: new Date().toISOString()
+        });
 
-      document.getElementById('nombre').value = '';
-      document.getElementById('diaEntrega').value = '';
-      document.getElementById('totalNota').value = '';
-      cargarClientes();
+        document.getElementById('nombre').value = '';
+        document.getElementById('diaEntrega').value = '';
+        document.getElementById('totalNota').value = '';
+        document.getElementById('diaVisita').value = '';
+        alert('Cliente agregado');
+        cargarClientes();
+      } catch (e) {
+        alert('Error: ' + e.message);
+      }
     }
 
     async function cargarClientes() {
-      const snapshot = await db.collection('clientes').get();
-      clientes = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      renderizarClientes();
-      actualizarKPIs();
+      try {
+        const snapshot = await db.collection('clientes').get();
+        clientes = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        renderizarClientes();
+        actualizarKPIs();
+      } catch (e) {
+        console.error(e);
+      }
     }
 
     function renderizarClientes() {
@@ -382,7 +392,6 @@
           const falta = calcularFalta(cliente);
           const diasAtraso = calcularDiasDesdeEntrega(cliente.diaEntrega);
           const esVencida = diasAtraso >= 15;
-          const porcentaje = ((totalPagado / cliente.totalNota) * 100).toFixed(0);
 
           html += `
             <div class="cliente-card" style="${esVencida && falta > 0 ? 'border-left: 4px solid #ef4444;' : ''}">
@@ -391,7 +400,10 @@
                   <div class="cliente-title">${cliente.nombre}</div>
                   <div class="cliente-subtitle">${cliente.diaEntrega}</div>
                 </div>
-                ${esVencida && falta > 0 ? `<span class="badge red">${diasAtraso} días</span>` : ''}
+                <div style="display: flex; gap: 8px;">
+                  ${esVencida && falta > 0 ? `<span class="badge red">${diasAtraso} días</span>` : ''}
+                  <button class="btn btn-delete" onclick="eliminarCliente('${cliente.id}')">✕</button>
+                </div>
               </div>
               <div class="stats-grid">
                 <div class="stat blue">
@@ -421,7 +433,7 @@
                 ${falta > 0 ? `
                   <div style="margin-top: 12px;">
                     <div class="payment-form">
-                      <input type="number" id="monto${cliente.id}" placeholder="Monto pago" step="0.01">
+                      <input type="number" id="monto${cliente.id}" placeholder="Monto" step="0.01">
                       <button class="btn btn-success" onclick="registrarPago('${cliente.id}')">✓</button>
                     </div>
                   </div>
@@ -438,26 +450,44 @@
       const monto = parseFloat(document.getElementById(`monto${clienteId}`).value);
       if (!monto || monto <= 0) return;
 
-      const cliente = clientes.find(c => c.id === clienteId);
-      const pagos = cliente.pagos || [];
-      pagos.push({ monto, fecha: new Date().toISOString() });
-
-      await db.collection('clientes').doc(clienteId).update({ pagos });
-      document.getElementById(`monto${clienteId}`).value = '';
-      cargarClientes();
+      try {
+        const cliente = clientes.find(c => c.id === clienteId);
+        const pagos = cliente.pagos || [];
+        pagos.push({ monto, fecha: new Date().toISOString() });
+        await db.collection('clientes').doc(clienteId).update({ pagos });
+        document.getElementById(`monto${clienteId}`).value = '';
+        cargarClientes();
+      } catch (e) {
+        alert('Error: ' + e.message);
+      }
     }
 
     async function eliminarPago(clienteId, idx) {
-      const cliente = clientes.find(c => c.id === clienteId);
-      cliente.pagos.splice(idx, 1);
-      await db.collection('clientes').doc(clienteId).update({ pagos: cliente.pagos });
-      cargarClientes();
+      try {
+        const cliente = clientes.find(c => c.id === clienteId);
+        cliente.pagos.splice(idx, 1);
+        await db.collection('clientes').doc(clienteId).update({ pagos: cliente.pagos });
+        cargarClientes();
+      } catch (e) {
+        alert('Error: ' + e.message);
+      }
+    }
+
+    async function eliminarCliente(clienteId) {
+      if (confirm('¿Eliminar?')) {
+        try {
+          await db.collection('clientes').doc(clienteId).delete();
+          cargarClientes();
+        } catch (e) {
+          alert('Error: ' + e.message);
+        }
+      }
     }
 
     function actualizarKPIs() {
       const clientesDia = clientes.filter(c => c.dia === diaActual);
-      
       let cobroDia = 0, carteraTime = 0, carteraVencida = 0;
+      
       clientesDia.forEach(c => {
         const totalPagado = calcularTotalPagado(c);
         const falta = calcularFalta(c);
@@ -481,8 +511,10 @@
       document.getElementById('carteraVencidaTotal').textContent = formatearMoneda(carteraVencidaTotal);
     }
 
-    inicializarDias();
-    cargarClientes();
+    setTimeout(() => {
+      inicializarDias();
+      cargarClientes();
+    }, 500);
   </script>
 </body>
 </html>
