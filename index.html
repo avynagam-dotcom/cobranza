@@ -25,6 +25,10 @@
     }
     .header h1 { font-size: 28px; color: #7c3aed; margin-bottom: 8px; }
     .header p { color: #666; font-size: 14px; }
+    .status { padding: 12px; border-radius: 8px; margin-bottom: 16px; font-size: 14px; font-weight: 500; }
+    .status.loading { background: #fef3c7; color: #92400e; }
+    .status.ready { background: #dcfce7; color: #166534; }
+    .status.error { background: #fee2e2; color: #991b1b; }
     .kpis {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -201,11 +205,8 @@
       border-radius: 20px;
       font-size: 12px;
       font-weight: bold;
-    }
-    .badge.red { background: #fee2e2; color: #991b1b; }
-    @media (max-width: 640px) {
-      .stats-grid { grid-template-columns: repeat(2, 1fr); }
-      .kpis { grid-template-columns: 1fr; }
+      background: #fee2e2;
+      color: #991b1b;
     }
   </style>
 </head>
@@ -213,8 +214,10 @@
   <div class="container">
     <div class="header">
       <h1>💰 Cobranza Avyna</h1>
-      <p>Sistema de cobranza sincronizado</p>
+      <p>Sistema de cobranza sincronizado con Firebase</p>
     </div>
+
+    <div id="statusDiv" class="status loading">⏳ Conectando con Firebase...</div>
 
     <div class="kpis">
       <div class="kpi green">
@@ -272,31 +275,57 @@
       </div>
 
       <div id="tabPendientes" class="tab-content" style="display:none;">
-        <div id="pendientesContent">Cargando clientes...</div>
+        <div id="pendientesContent">Cargando...</div>
       </div>
     </div>
   </div>
 
   <script>
-    const firebaseConfig = {
-      apiKey: "AIzaSyBrkZMBJm3BXmGqEJcHuJRAcB5tuSpWvZE",
-      authDomain: "cobranza-avyna-gam.firebaseapp.com",
-      projectId: "cobranza-avyna-gam",
-      storageBucket: "cobranza-avyna-gam.firebasestorage.app",
-      messagingSenderId: "910582099743",
-      appId: "1:910582099743:web:bb1488d8615e0546ed8a2a",
-      measurementId: "G-7HFB2PJ18X"
-    };
+    let db = null;
+    let firebaseReady = false;
 
-    firebase.initializeApp(firebaseConfig);
-    const db = firebase.firestore();
+    function inicializarFirebase() {
+      try {
+        const firebaseConfig = {
+          apiKey: "AIzaSyBrkZMBJm3BXmGqEJcHuJRAcB5tuSpWvZE",
+          authDomain: "cobranza-avyna-gam.firebaseapp.com",
+          projectId: "cobranza-avyna-gam",
+          storageBucket: "cobranza-avyna-gam.firebasestorage.app",
+          messagingSenderId: "910582099743",
+          appId: "1:910582099743:web:bb1488d8615e0546ed8a2a",
+          measurementId: "G-7HFB2PJ18X"
+        };
+
+        firebase.initializeApp(firebaseConfig);
+        db = firebase.firestore();
+        firebaseReady = true;
+        
+        document.getElementById('statusDiv').className = 'status ready';
+        document.getElementById('statusDiv').textContent = '✓ Conectado a Firebase';
+        
+        setTimeout(() => {
+          document.getElementById('statusDiv').style.display = 'none';
+        }, 3000);
+
+        iniciar();
+      } catch (e) {
+        document.getElementById('statusDiv').className = 'status error';
+        document.getElementById('statusDiv').textContent = '✗ Error: ' + e.message;
+      }
+    }
 
     const dias = ['Lunes 1', 'Lunes 2', 'Martes 1', 'Martes 2', 'Miércoles 1', 'Miércoles 2', 'Jueves 1', 'Jueves 2', 'Viernes 1', 'Viernes 2'];
     let diaActual = 'Lunes 1';
     let clientes = [];
 
+    function iniciar() {
+      inicializarDias();
+      cargarClientes();
+    }
+
     function inicializarDias() {
       const nav = document.getElementById('diasNav');
+      nav.innerHTML = '';
       dias.forEach(dia => {
         const btn = document.createElement('button');
         btn.className = `dia-btn ${dia === diaActual ? 'active' : ''}`;
@@ -304,15 +333,12 @@
         btn.onclick = (e) => cambiarDia(dia, e);
         nav.appendChild(btn);
       });
-      cambiarDia(diaActual, null);
     }
 
     function cambiarDia(dia, e) {
       diaActual = dia;
-      if (e) {
-        document.querySelectorAll('.dia-btn').forEach(btn => btn.classList.remove('active'));
-        e.target.classList.add('active');
-      }
+      document.querySelectorAll('.dia-btn').forEach(btn => btn.classList.remove('active'));
+      e.target.classList.add('active');
       document.getElementById('tabNuevo').style.display = 'none';
       document.getElementById('tabPendientes').style.display = 'block';
       renderizarClientes();
@@ -338,6 +364,11 @@
     }
 
     async function agregarCliente() {
+      if (!firebaseReady) {
+        alert('Firebase aún no está listo. Intenta de nuevo en unos segundos.');
+        return;
+      }
+
       const dia = document.getElementById('diaVisita').value;
       const nombre = document.getElementById('nombre').value.trim();
       const diaEntrega = document.getElementById('diaEntrega').value;
@@ -362,7 +393,7 @@
         document.getElementById('diaEntrega').value = '';
         document.getElementById('totalNota').value = '';
         document.getElementById('diaVisita').value = '';
-        alert('Cliente agregado');
+        alert('Cliente agregado exitosamente');
         cargarClientes();
       } catch (e) {
         alert('Error: ' + e.message);
@@ -370,13 +401,15 @@
     }
 
     async function cargarClientes() {
+      if (!firebaseReady) return;
+      
       try {
         const snapshot = await db.collection('clientes').get();
         clientes = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         renderizarClientes();
         actualizarKPIs();
       } catch (e) {
-        console.error(e);
+        console.error('Error:', e);
       }
     }
 
@@ -401,7 +434,7 @@
                   <div class="cliente-subtitle">${cliente.diaEntrega}</div>
                 </div>
                 <div style="display: flex; gap: 8px;">
-                  ${esVencida && falta > 0 ? `<span class="badge red">${diasAtraso} días</span>` : ''}
+                  ${esVencida && falta > 0 ? `<span class="badge">${diasAtraso} días</span>` : ''}
                   <button class="btn btn-delete" onclick="eliminarCliente('${cliente.id}')">✕</button>
                 </div>
               </div>
@@ -448,7 +481,10 @@
 
     async function registrarPago(clienteId) {
       const monto = parseFloat(document.getElementById(`monto${clienteId}`).value);
-      if (!monto || monto <= 0) return;
+      if (!monto || monto <= 0) {
+        alert('Ingresa un monto válido');
+        return;
+      }
 
       try {
         const cliente = clientes.find(c => c.id === clienteId);
@@ -474,7 +510,7 @@
     }
 
     async function eliminarCliente(clienteId) {
-      if (confirm('¿Eliminar?')) {
+      if (confirm('¿Eliminar este cliente?')) {
         try {
           await db.collection('clientes').doc(clienteId).delete();
           cargarClientes();
@@ -511,24 +547,7 @@
       document.getElementById('carteraVencidaTotal').textContent = formatearMoneda(carteraVencidaTotal);
     }
 
-    // Esperar a que Firebase esté listo
-    let intentos = 0;
-    const esperarFirebase = setInterval(() => {
-      try {
-        if (db && firebase.apps.length > 0) {
-          clearInterval(esperarFirebase);
-          inicializarDias();
-          cargarClientes();
-        }
-        intentos++;
-        if (intentos > 20) {
-          clearInterval(esperarFirebase);
-          alert('Error al conectar con Firebase. Recarga la página.');
-        }
-      } catch (e) {
-        // Esperando...
-      }
-    }, 500);
+    window.addEventListener('load', inicializarFirebase);
   </script>
 </body>
 </html>
