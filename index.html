@@ -511,9 +511,23 @@
       document.getElementById('carteraVencidaTotal').textContent = formatearMoneda(carteraVencidaTotal);
     }
 
-    setTimeout(() => {
-      inicializarDias();
-      cargarClientes();
+    // Esperar a que Firebase esté listo
+    let intentos = 0;
+    const esperarFirebase = setInterval(() => {
+      try {
+        if (db && firebase.apps.length > 0) {
+          clearInterval(esperarFirebase);
+          inicializarDias();
+          cargarClientes();
+        }
+        intentos++;
+        if (intentos > 20) {
+          clearInterval(esperarFirebase);
+          alert('Error al conectar con Firebase. Recarga la página.');
+        }
+      } catch (e) {
+        // Esperando...
+      }
     }, 500);
   </script>
 </body>
